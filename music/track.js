@@ -1,4 +1,4 @@
-import { AudioResource, createAudioResource, demuxProbe } from '@discordjs/voice';
+import { createAudioResource, demuxProbe } from '@discordjs/voice';
 
 // in the tutorial, they import { getInfo } as a named export but that doesn't work with this ES module so I do ytdl.getInfo (appears to work fine)
 import ytdl from 'ytdl-core';
@@ -8,27 +8,26 @@ import TimeFormat from 'hh-mm-ss';
 // in the tutorial they import youtubedl.raw as ytdl and use that. That function says it doesn't exist so I use .exec()
 import youtubedl from 'youtube-dl-exec';
 import { searchYoutube } from '../api-functions/youtube-functions.js';
-import { subscriptions } from './subscription.js';
 
 const noop = () => { };
 
 /**
- * A Track represents information about a YouTube video (in this context) that can be added to a queue.
+ * A Track represents information about a YouTube video or Spotify song that can be added to a queue.
  * It contains the title and URL of the video, as well as functions onStart, onFinish, onError, that act
  * as callbacks that are triggered at certain points during the track's lifecycle.
  *
  * Rather than creating an AudioResource for each video immediately and then keeping those in a queue,
  * we use tracks as they don't pre-emptively load the videos. Instead, once a Track is taken from the
- * queue, it is converted into an AudioResource just in time for playback.
+ * queue, it is converted into an AudioResource just in time for playback. Spotify tracks don't gain
+ * a youtube_url or youtube_title until the moment they are about to play.
  * 
- * In the future, maybe: possibly code a buffer so that the current video and the next video are both loaded
  */
 export class Track {
 
 	constructor({ youtube_url, youtube_title, spotify_title, spotify_author, spotify_image_url, requestedBy, durationTimestamp, subscription, onStart, onFinish, onError }) {
 
 		this.youtube_url = youtube_url;        // All tracks are guaranteed to have a youtube_url and youtube_title at the time onStart() is called
-		this.youtube_title = youtube_title;    // (spotify tracks don't get theirs until the moment they are taken from the queue)
+		this.youtube_title = youtube_title;    // (spotify tracks don't get theirs until the moment they are taken from the queue. Why? see Track.fromSpotifyInfo for an explanation)
 
 		this.spotify_title = spotify_title;    // only tracks that are queued up from spotify will have these properties filled out. When a spotify track plays, it
 		this.spotify_author = spotify_author;  // shows both spotify title and the calculated youtube title, so users can see if there is a disparity
@@ -44,13 +43,14 @@ export class Track {
 
 		this.alternate_youtube_videos = [];
 
-		// Lifecycle functions onStart, onFinish, and onError are guaranteed to only be called once. Why must we guarantee this? 
-		// e.g: when the audioPlayer transitions to the playing state onStart is called so if we don't wrap it, then making the bot
-		// move voice channels will cause audioPlayer state change, meaning onStart() to get called again.
+
 		this.setLifecycleFunctions({ onStart, onFinish, onError });
 
 	}
 
+	// Lifecycle functions onStart, onFinish, and onError are guaranteed to only be called once. Why must we guarantee this? e.g: any time the audioPlayer transitions
+	// to the playing state, onStart is called so if we don't wrap it, then making the bot move voice channels will cause AudioPlayer state change
+	// (as a result of going from AutoPaused to Playing during the interruption of the VoiceConnection), meaning onStart() will get called again.
 	setLifecycleFunctions(lifeCycleFunctions) {
 
 		const wrappedFunctions = {
@@ -75,12 +75,12 @@ export class Track {
 
 	/**
 	 * Creates an AudioResource from this Track. This track will either have a URL already so we can simply call Track.createAudioResourceFromURL(), or
-	 * a Title and Author will be supplied so we can search youtube for the most relevant video based on the title and author and find a URL then re-call
+	 * a Title and Author will be supplied so we can search youtube for the most relevant video based on the title and author and find a URL then recurse
 	 */
 	createAudioResource() {
 
-		this.errored = false;
-		console.log('CreateAudioResource called for: ' + (this.youtube_title || this.spotify_title) )
+		this.downloadFailed = false;
+		console.log('CreateAudioResource called for: ' + (this.youtube_title || this.spotify_title))
 
 		return new Promise((resolve, reject) => {
 
@@ -88,15 +88,14 @@ export class Track {
 			if (!this.youtube_url) {
 
 				if (!this.spotify_title)
-					return reject('If no URL is supplied, you must supply a title at least')
+					return reject('I am a bad coder')
 
 				searchYoutube({ songName: this.spotify_title, author: this.spotify_author, uncensoredLyrics: true }).then((searchResults) => {
 
-					console.log('resultant results', searchResults)
-
-
-					if (!searchResults)
-						return reject('Could not find a youtube URL relevant to the supplied song information');
+					if (!searchResults) {
+						this.subscription.lastTextChannel.send('Could not find a Youtube URL relevant to the Spotify song `' + this.spotify_author + " - " + this.spotify_title + "`. This track will be skipped.")
+						return reject('Could not find youtube URL for this spotify track');
+					}
 
 					this.youtube_url = searchResults[0].youtube_url;
 					this.youtube_title = searchResults[0].youtube_title;
@@ -166,7 +165,7 @@ export class Track {
 								this.subscription.lastTextChannel.send(`Failed to play ${"`" + this.youtube_title + "`"}, Trying again (${4 - this.currentReplayAttempt} attempts left after this attempt)`)
 							}
 
-							this.errored = true; // Set errored to 'true' so that the next call to onFinish() as a result of the track ending abruptly doesn't get called (methods are wrapped so they only call once)
+							this.downloadFailed = true; // Set errored to 'true' so that the next call to onFinish() as a result of the track ending abruptly doesn't get called (methods are wrapped so they only call once)
 
 							// Tells the subscription event handlers to not automatically process the queue as a result of the audio player going idle. Calls to processQueue() will automatically set 
 							// wait back to false. After we call stop() below we want to make sure that another random track doesn't start playing because we want to give this track a chance to play, hence using 'wait'
@@ -182,7 +181,7 @@ export class Track {
 					}
 
 					stream.resume();
-					reject("Ran into error ");
+					reject("Error occured during the spawn of the process downloaded from youtube-download-exec");
 				};
 
 
@@ -201,12 +200,12 @@ export class Track {
 		});
 	}
 
-	/**
-	 * The URL and alternate URLS will be computed at the time that createAudioResource() is called (i.e when it is this Track's turn to play)
+	/**t
+	 * The youtube URL and alternate URLS will be computed at the time that createAudioResource() is called (i.e when it is this Track's turn to play)
 	 * The reason for this is it takes ~500ms to search youtube to get the URL from the track info (title, author, etc) for 
-	 * each song. So if they add a 300 song spotify playlist, it would legit take like 4 minutes to process their request trying
+	 * each song. So if they add a 300 song spotify playlist, it would take like 5 minutes to process their request trying
 	 * to get all the links, create all the tracks, and bulk queue them. So instead we queue the songs up without a computed URL yet,
-	 * and we get the URL as the song is about to play, based on the spotify info such as title and author
+	 * and we get the relevant URLs as the song is about to play, based on the spotify info such as title and author
 	 * @param {} songTitle 
 	 * @param {*} author 
 	 * @param {*} lifeCycleFunctions 

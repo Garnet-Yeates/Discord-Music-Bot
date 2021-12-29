@@ -1,7 +1,5 @@
 import { SlashCommandBuilder } from '@discordjs/builders';
 
-import TimeFormat from 'hh-mm-ss';
-
 import { GuildMember, MessageEmbed, MessageAttachment } from 'discord.js';
 import {
     AudioPlayerStatus,

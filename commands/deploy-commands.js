@@ -6,7 +6,7 @@ export * from '../configure-environment.js';
 import commands from './commands.js'
 
 // This section of code loads up the command dictionary that is exported from commands.js and reads
-// each key (same as command name) and pushes its corresponding builder as JSON to be deployed later
+// each key (same as command name) and pushes its corresponding builder as JSON to be deployed below
 
 const commandBuilders = [];
 

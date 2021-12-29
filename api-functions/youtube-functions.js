@@ -15,9 +15,6 @@ export async function searchYoutube({ songName, author, uncensoredLyrics = false
 
         return validData.map(data => {
             let duration = data.duration_raw;
-            console.log('raw duratidon: ' + duration);
-
-            // h:mm:ss
 
             // If it is in the format like m:ss or h:mm:ss, we turn it into mm:ss or hh:mm:ss respectively
             if (duration.slice(0, duration.indexOf(':')).length < 2)
