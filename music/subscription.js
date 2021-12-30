@@ -225,7 +225,6 @@ export class MusicSubscription {
 		// Take the first item from the queue. This is guaranteed to exist due to the non-empty check above.
 		const unlockQueue = await this.queue.acquireLock();
 		const nextTrack = this.queue.dequeue();
-		console.log("Next fuck", nextTrack)
 		unlockQueue();
 
 		try {
