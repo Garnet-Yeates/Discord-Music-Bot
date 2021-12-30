@@ -12,8 +12,6 @@ import { Track } from '../music/track.js';
 import { subscriptions, getOrCreateSubscription } from '../music/subscription.js'
 import { getSpotifySongsFromPlaylist } from '../api-functions/spotify-functions.js'
 
-import client from '../client.js';
-
 // In order for an interaction to be valid for music playing, it must be made by a guild member who is inside of a voice channel
 const isInteractionValidForMusic = (interaction) => (interaction && interaction.member instanceof GuildMember && interaction?.member?.voice?.channel?.id && interaction.channel)
 
@@ -170,7 +168,8 @@ const commands = {
             .setDescription(`Same as /play, but adds to the beginning of the queue. Can't be used with a spotify playlist URL`)
             .addStringOption(option =>
                 option.setName('song')
-                    .setDescription('Song Name | Youtube URL')),
+                    .setDescription('Song Name | Youtube URL')
+                    .setRequired(true)),
 
         async execute(interaction) {
             return await commands.play.execute(interaction, true);
@@ -185,7 +184,8 @@ const commands = {
             .setDescription(`Same as /play, but skips and plays immediately. Can't be used with a spotify playlist URL`)
             .addStringOption(option =>
                 option.setName('song')
-                    .setDescription('Song Name | Youtube URL')),
+                    .setDescription('Song Name | Youtube URL')
+                    .setRequired(true)),
 
 
         async execute(interaction) {
@@ -293,7 +293,10 @@ const commands = {
             if (end > subscription.queue.length)
                 end = subscription.queue.length;
 
+            const release = subscription.queueAccessMutex.acquire();
             const tracks = subscription.queue.slice(page * resultsPerPage, end);
+            release();
+
             let currIndex = page * resultsPerPage;
 
             let string = `${"Queue Page " + "`" + page + "` of " + "`" + highestPage + "`"} `;
@@ -314,45 +317,51 @@ const commands = {
             .setDescription('Swaps the position of 2 songs in the queue')
             .addStringOption(option =>
                 option.setName('index1')
-                    .setDescription('The first index being swapped'))
+                    .setDescription('The first index being swapped')
+                    .setRequired(true))
             .addStringOption(option =>
                 option.setName('index2')
                     .setDescription('The second index being swapped')),
 
-        async execute(interaction) {
+        async execute(interaction, overrideIndex1, overrideIndex2) {
 
             const subscription = subscriptions.get(interaction.guildId);
 
-            if (!interaction.options.getString('index1'))
-                return interaction.reply("At least 1 index must be supplied. If only one is supplied, it will swap with position `0`");
-
             if (!subscription)
                 return interaction.reply("Not currently playing on this server");
+
+            subscription.lastTextChannel = interaction.channel;
 
             if (subscription.queue.length < 2) {
                 return interaction.reply("If you swap a melon with a melon what do you get? A melon");
             }
 
+            if (!interaction.options.getString('index1'))
+                return interaction.reply("At least 1 index must be supplied. If only one is supplied, it will swap with index `0`");
+
             // If the command has an argument, they are not using /play in order to unpause, but rather to queue up a new track
-            const index1 = Number(interaction.options.getString('index1').trim());
+            const index1 = overrideIndex1 ?? Number(interaction.options.getString('index1').trim());
             if (Number.isNaN(index1))
-                return interaction.reply("Index must be a number! To see indices, type /queue")
+                return interaction.reply("`index1` must be a number! To see indices, type /queue")
 
-            const index2 = Number(interaction.options.getString('index2')?.trim() ?? 0);
+            const index2 = overrideIndex2 ?? Number(interaction.options.getString('index2')?.trim() ?? 0);
             if (Number.isNaN(index2))
-                return interaction.reply("Index must be a number! To see indices, type /queue")
+                return interaction.reply("`index2` must be a number! To see indices, type /queue")
 
-            index1 > subscription.queue.length && (index1 = queue.length - 1);
-            index2 > subscription.queue.length && (index2 = queue.length - 1);
+            if (index1 >= subscription.queue.length)
+                return interaction.reply("`index1` is too high (the highest index in the queue is `" + (subscription.queue.length - 1) + "`)")
+
+            if (index2 >= subscription.queue.length)
+                return interaction.reply("`index2` is too high (the highest index in the queue is `" + (subscription.queue.length - 1) + "`)")
+
+            if (index1 < 0)
+                return interaction.reply("`index1` is too low (cannot be below `0`)")
+
+            if (index2 < 0)
+                return interaction.reply("`index2` is too low (cannot be below `0`)")
 
             if (index1 === index2)
-                return interaction.reply("Indices cannot be the same")
-
-            if (index1 < 0 || index2 < 0) {
-                return interaction.reply("Index can't be less than 0")
-            }
-
-            subscription.lastTextChannel = interaction.channel;
+                return interaction.reply("If you swap a melon with a melon what do you get? A melon");
 
             subscription.swap(index1, index2)
 
@@ -382,8 +391,7 @@ const commands = {
 
             const skipping = subscription.nowPlaying();
 
-            // Calling stop switches the audioPlayer to the Idle state which triggers situation e (process queue, check for inactivity) in subscription.js
-            subscription.audioPlayer.stop();
+            subscription.skip();
             return interaction.reply("Skipped `" + skipping.youtube_title + "`")
         }
     },
@@ -409,22 +417,126 @@ const commands = {
                 return interaction.reply("Cannot skip since a track is not playing yet")
 
             const skipping = subscription.nowPlaying();
-
-            // Calling stop switches the audioPlayer to the Idle state which triggers situation e (process queue, check for inactivity) in subscription.js. This effectively skips this track
-            subscription.audioPlayer.stop();
+            subscription.skip();
             return interaction.reply("Skipped `" + skipping.youtube_title + "`")
         }
+    },
+
+    replace: {
+
+        commandBuilder: new SlashCommandBuilder()
+            .setName('replace')
+            .setDescription('Replaces the currently playing song with the song at the given queue index')
+            .addStringOption(option =>
+                option.setName('index')
+                    .setDescription('The index being swapped with the current song')
+                    .setRequired(true)),
+
+        async execute(interaction) {
+
+            const subscription = subscriptions.get(interaction.guildId);
+
+            if (!subscription)
+                return interaction.reply("Not currently playing on this server");
+
+            subscription.lastTextChannel = interaction.channel;
+
+            if (!interaction.options.getString('index'))
+                return interaction.reply("A queue index must be specified for this command`");
+
+            const index = Number(interaction.options.getString('index').trim())
+            if (Number.isNaN(index))
+                return interaction.reply("Index must be a number! To see indices, type /queue")
+
+            if (index <= 0) {
+                return interaction.reply("Replacing with index 0 is the same as /skip. Just use /skip")
+            }
+
+            if (index >= subscription.queue.length) {
+                return interaction.reply("Index too high (the highest index in the queue is `" + (subscription.queue.length - 1) + "`)")
+            }
+
+            await commands.swap.execute(interaction, 0, index);
+            subscription.skip();
+        }
+
     },
 
     jump: {
 
         commandBuilder: new SlashCommandBuilder()
-            .setName('move')
-            .setDescription('Moves the bot to the channel you are currently in'),
+            .setName('jump')
+            .setDescription('Skips all songs in the queue (including current) up to the given queue index')
+            .addStringOption(option =>
+                option.setName('index')
+                    .setDescription('The index being jumped to')
+                    .setRequired(true)),
+
+        async execute(interaction) {
+
+            const subscription = subscriptions.get(interaction.guildId);
+
+            if (!subscription)
+                return interaction.reply("Not currently playing on this server");
+
+            subscription.lastTextChannel = interaction.channel;
+
+            if (!interaction.options.getString('index'))
+                return interaction.reply("A queue index must be specified for this command`");
+
+            const index = Number(interaction.options.getString('index').trim())
+            if (Number.isNaN(index))
+                return interaction.reply("Index must be a number! To see indices, type /queue")
+
+            if (index <= 0) {
+                return interaction.reply("Jumping to index 0 is the same as /skip. Just use /skip")
+            }
+
+            if (index >= subscription.queue.length) {
+                return interaction.reply("Index too high (the highest index in the queue is `" + (subscription.queue.length - 1) + "`)")
+            }
+
+            subscription.jump(index);
+        }
 
     },
 
     remove: {
+
+        commandBuilder: new SlashCommandBuilder()
+            .setName('remove')
+            .setDescription('Removes the specified index from the queue')
+            .addStringOption(option =>
+                option.setName('index')
+                    .setDescription('The index being removed from the queue')
+                    .setRequired(true)),
+
+        async execute(interaction) {
+
+            const subscription = subscriptions.get(interaction.guildId);
+
+            if (!subscription)
+                return interaction.reply("Not currently playing on this server");
+
+            subscription.lastTextChannel = interaction.channel;
+
+            if (!interaction.options.getString('index'))
+                return interaction.reply("A queue index must be specified for this command`");
+
+            const index = Number(interaction.options.getString('index').trim())
+            if (Number.isNaN(index))
+                return interaction.reply("Index must be a number! To see indices, type /queue")
+
+            if (index < 0) {
+                return interaction.reply("Index too low")
+            }
+
+            if (index >= subscription.queue.length) {
+                return interaction.reply("Index too high (the highest index in the queue is `" + (subscription.queue.length - 1) + "`)")
+            }
+
+            subscription.remove(index);
+        }
 
     },
 
@@ -473,7 +585,7 @@ async function enqueueYoutubeTrack(track, subscription, deferred_interaction, be
     if (beginningOfQueue) {
         subscription.enqueueNext(track);
         if (now)
-            subscription.audioPlayer.stop(true); // stop switches audioplayer to idle state which processess queue
+            subscription.skip(); 
         deferred_interaction.followUp(`Enqueued ${"`" + track.youtube_title + "`"} at position ${"`0`"}`);
     }
     else {

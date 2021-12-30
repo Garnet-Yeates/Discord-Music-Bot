@@ -6,6 +6,7 @@ import {
 	VoiceConnectionDisconnectReason,
 	VoiceConnectionStatus,
 } from '@discordjs/voice';
+import { Mutex } from 'async-mutex';
 
 import { VoiceChannel } from 'discord.js';
 
@@ -80,6 +81,12 @@ export class MusicSubscription {
 		this.destroyed = false;
 		this.lastTextChannel = textChannel;
 		this.guildId = guildId
+
+		// Make sure we are synchronizing our access to the queue (via enqueue, bulkEnqueue, swap, slice, delete, etc) across our async functions
+		this.queueAccessMutex = new Mutex();
+
+		// This differs from the mutex. It is not for synchronizing but instead it cancels calls to processQueue() if one is in progress
+		this.queueProcessLock = false;
 
 		// Attach logic to the VoiceConnection to implement error recovery and reconnection logic
 		this.voiceConnection.on('stateChange', async (_, newState) => {
@@ -183,35 +190,57 @@ export class MusicSubscription {
 
 	// Can be awaited but doesn't need to be
 	async enqueue(track) {
+		const release = await this.queueAccessMutex.acquire();
 		console.log('Added `' + track.youtube_title + "` to the queue")
 		this.queue.push(track);
+		release();
 		await this.processQueue();
 	}
 
 	// Can be awaited but doesn't need to be
 	async bulkEnqueue(tracks, autoShuffle = true) {
-		console.log('Added `' + tracks.length + "` tracks to the queue")
+		const release = await this.queueAccessMutex.acquire();
 		this.queue.push(...tracks);
+		release();
 		autoShuffle && this.shuffle();
 		await this.processQueue();
 	}
 
 	// Can be awaited but doesn't need to be
 	async enqueueNext(track) {
+		const release = await this.queueAccessMutex.acquire();
 		console.log('Added `' + track.youtube_title + "` to the queue")
 		this.queue.push(track);
+		release();
 		this.swap(0, this.queue.length - 1);
 		await this.processQueue();
 	}
 
-	clear() {
+	async clear() {
+		const release = await this.queueAccessMutex.acquire();
 		this.queue = [];
+		release();
+	}
+
+	async jump(index) {
+		const release = await this.queueAccessMutex.acquire();
+		this.queue = this.queue.slice(index);
+		release();
+		this.skip();
+	}
+
+	skip() {
+		this.audioPlayer.stop(true);
 	}
 
 	// Terminates this subscription
-	stop() {
-		this.queueLock = true;
+	async stop() {
+		this.queueProcessLock = true;
+
+		const release = await this.queueAccessMutex.acquire();
 		this.queue = [];
+		release();
+
 		this.audioPlayer.stop(true);
 		this.destroyed = true;
 		if (this.voiceConnection.state.status !== VoiceConnectionStatus.Destroyed)
@@ -223,14 +252,18 @@ export class MusicSubscription {
 		return this.audioPlayer.state.resource.metadata;
 	}
 
-	swap(index1, index2) {
+	async swap(index1, index2) {
+		const release = await this.queueAccessMutex.acquire();
 		let temporaryValue = this.queue[index1];
 		this.queue[index1] = this.queue[index2];
 		this.queue[index2] = temporaryValue;
+		release();
 	}
 
-	remove(index) {
+	async remove(index) {
+		const release = await this.queueAccessMutex.acquire();
 		this.queue.splice(index, 1);
+		release();
 	}
 
 	shuffle() {
@@ -251,28 +284,33 @@ export class MusicSubscription {
 		this.wait = false;
 		console.log('processing queue. what will be taken out? ', this.queue[0]?.youtube_title ?? this.queue[0]?.spotify_title)
 
+		const release = await this.queueAccessMutex.acquire();
+
 		// If the queue is locked (already being processed), is empty, or the audio player is already playing something, return
-		if (this.queueLock || this.audioPlayer.state.status !== AudioPlayerStatus.Idle || this.queue.length === 0) {
+		if (this.queueProcessLock || this.audioPlayer.state.status !== AudioPlayerStatus.Idle || this.queue.length === 0) {
 			console.log('Process Queue cancelled because queue lock, audio player status not being idle, or nothing in queue ')
+			release();
 			return;
 		}
 
-		// Lock the queue to guarantee safe access
-		this.queueLock = true;
+		// Lock the queue to guarantee that processQueue() never runs concurrently (other calls are completely ignored, not waited for like with our mutex lock for queue access)
+		this.queueProcessLock = true;
 
 		// Take the first item from the queue. This is guaranteed to exist due to the non-empty check above.
 		const nextTrack = this.queue.shift();
+		release();
+
 		try {
 			// Attempt to convert the Track into an AudioResource (i.e. start streaming the video)
 			const resource = await nextTrack.createAudioResource();
 			this.audioPlayer.play(resource);
-			this.queueLock = false;
+			this.queueProcessLock = false;
 		} catch (error) {
 			// If an error occurred, try the next item of the queue instead
 			// 99% of the time, we are able to recover from the error (see spawnErrorHandler inside track.js) by downloading a different youtube URL, but in
 			// the rare cases where a track is completely unable to play, we need this code block to try the next one and kickstart the natural queue flow
 			nextTrack.onError(error);
-			this.queueLock = false;
+			this.queueProcessLock = false;
 			return this.processQueue();
 		}
 	}

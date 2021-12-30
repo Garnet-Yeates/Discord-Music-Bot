@@ -9,7 +9,8 @@ import TimeFormat from 'hh-mm-ss';
 import youtubedl from 'youtube-dl-exec';
 import { searchYoutube } from '../api-functions/youtube-functions.js';
 
-const noop = () => { };
+import { MessageEmbed, MessageAttachment } from 'discord.js'
+import client from '../client.js';
 
 /**
  * A Track represents information about a YouTube video or Spotify song that can be added to a queue.
@@ -213,9 +214,9 @@ export class Track {
 							// wait back to false. After we call stop() below we want to make sure that another random track doesn't start playing because we want to give this track a chance to play, hence using 'wait'
 							this.subscription.wait = true;
 
-							// Call stop(true) to force stop. Right now the track is in the buffering state, and if we don't force stop it, it will end up in the 'playing state' for a brief moment
-							// before the audioPlayer realizes it is broken. This means onStart() will get called when we don't want it to because it's not actually starting!
-							this.subscription.audioPlayer.stop(true);
+							// Call stop(true) (via skip) to force stop AudioPlayer. Right now the track is in the buffering state, and if we don't force stop it, it will end up in the 'playing state' for a brief moment
+							// before the AudioPlayer realizes it is broken. This means onStart() will get called when we don't want it to because it's not actually starting!
+							this.subscription.skip();
 
 							// Because of our calls to wait() and stop(), we can ensure that the track will be the one that plays next
 							this.subscription.enqueueNext(this);

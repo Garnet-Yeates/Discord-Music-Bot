@@ -15,6 +15,7 @@
     "@discordjs/opus": "^0.5.3",
     "@discordjs/rest": "^0.2.0-canary.0",
     "@discordjs/voice": "^0.7.5",
+    "async-mutex": "^0.3.2",
     "axios": "^0.24.0",
     "discord-api-types": "^0.25.2",
     "discord.js": "^13.3.1",
