@@ -5,6 +5,9 @@ import { Client, Intents } from 'discord.js'
 
 import commands from './commands/commands.js'
 
+let aye = [];
+aye[90] = 4;
+
 // Create a new client instance and give it the intents that we need for this bot
 const client = new Client({ intents: [Intents.FLAGS.GUILDS, "GUILD_MESSAGES", 'GUILD_VOICE_STATES'], partials: ["CHANNEL"] });
 

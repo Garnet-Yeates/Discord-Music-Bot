@@ -103,7 +103,7 @@ export class Track {
 		this.finished = true;
 
 		this.subscription.lastTextChannel.guild.members.cache.get(client.user.id).setNickname('garnbot')
-                    this.subscription.lastTextChannel.send(`Finished playing ${"`" + this.youtube_title + "`"}. There are currently ${"`" + this.subscription.queue.length + "`"} songs left in the queue`)
+                    this.subscription.lastTextChannel.send(`Finished playing ${"`" + this.youtube_title + "`"}. There are currently ${"`" + this.subscription.queue.length() + "`"} songs left in the queue`)
 	}
 
 	onError() {
@@ -171,7 +171,7 @@ export class Track {
 				// it re-queues this track again at the beginning of the queue, and freezes the queue temporarily to allow
 				// this track to get processed again. This is all in an attempt to try loading it again a couple of times (max 3)
 				// if loading fails after 3 attempts, the track is skipped
-				const spawnErrorHandler = (error) => {
+				const spawnErrorHandler = async (error) => {
 					console.log(error.shortMessage);
 
 					if (!process.killed) process.kill();
@@ -219,7 +219,11 @@ export class Track {
 							this.subscription.skip();
 
 							// Because of our calls to wait() and stop(), we can ensure that the track will be the one that plays next
-							this.subscription.enqueueNext(this);
+							const unlockQueue = await this.subscription.queue.acquireLock();
+							subscription.queue.enqueueFirst(this);
+							unlockQueue();
+
+							void this.subscription.processQueue();
 						}
 					}
 

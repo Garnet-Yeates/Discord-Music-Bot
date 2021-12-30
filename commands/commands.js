@@ -82,7 +82,9 @@ const commands = {
                         if (!await ensureConnectionIsReady(subscription))
                             return interaction.followUp('Could not establish a voice connection within 15 seconds, please try again later');
 
-                        enqueueYoutubeTrack(track, subscription, interaction, beginningOfQueue, now);
+                        track.subscription = subscription;
+
+                        await enqueueYoutubeTrack(track, subscription, interaction, beginningOfQueue, now);
                     }
 
                     // When they type /play <SPOTIFY_PLAYLIST_URL>
@@ -114,7 +116,15 @@ const commands = {
                         if (!await ensureConnectionIsReady(subscription))
                             return interaction.followUp('Could not establish a voice connection within 15 seconds, please try again later');
 
-                        subscription.bulkEnqueue(spotifyTracks);
+                        for (let track of spotifyTracks)
+                            track.subscription = subscription;
+
+                        const unlockQueue = await subscription.queue.acquireLock();
+                        subscription.queue.enqueue(...spotifyTracks);
+                        subscription.queue.shuffle();
+                        unlockQueue();
+
+                        void subscription.processQueue();
 
                         return interaction.followUp(`Enqueued **${spotifyTracks.length}** tracks from the spotify playlist`)
                     }
@@ -135,7 +145,7 @@ const commands = {
 
                         track.subscription = subscription;
 
-                        enqueueYoutubeTrack(track, subscription, interaction, beginningOfQueue, now);
+                        await enqueueYoutubeTrack(track, subscription, interaction, beginningOfQueue, now);
                     }
                 }
                 else {
@@ -232,9 +242,10 @@ const commands = {
 
             subscription.lastTextChannel = interaction.channel;
 
-            subscription.shuffle();
-
-            return interaction.reply("Shuffled!")
+            // Wait for the mutex lock for our queue so we don't modify it concurrently. Also adds 'unlockQueueReply' to the interaction
+            await subscription.queue.acquireLock(interaction);
+            subscription.queue.shuffle();
+            return interaction.unlockQueueReply("Shuffled!")
         }
     },
 
@@ -253,9 +264,10 @@ const commands = {
 
             subscription.lastTextChannel = interaction.channel;
 
-            subscription.clear();
-
-            return interaction.reply("Queue Cleared!")
+            // Wait for the mutex lock for our queue so we don't modify it concurrently. Also adds 'unlockQueueReply' to the interaction
+            await subscription.queue.acquireLock(interaction);
+            subscription.queue.clear();
+            return interaction.unlockQueueReply("Queue Cleared!")
         }
     },
 
@@ -277,25 +289,29 @@ const commands = {
 
             subscription.lastTextChannel = interaction.channel;
 
-            if (subscription.queue.length == 0)
-                return interaction.reply({ content: "The queue is currently empty", ephemeral: true })
+            // Wait for the mutex lock for our queue so we don't modify it concurrently. Also adds 'unlockQueueReply' to the interaction
+            await subscription.queue.acquireLock(interaction);
+
+            const length = subscription.queue.length();
+
+            if (length == 0) 
+                return interaction.unlockQueueReply({ content: "The queue is currently empty", ephemeral: true })
 
             // If the command has an argument, they are not using /play in order to unpause, but rather to queue up a new track
             let page = Number(interaction.options.getString('page'));
             !page && (page = 0);
+            page < 0 && (page = 0)
 
             const resultsPerPage = 10;
 
-            const highestPage = Math.ceil(subscription.queue.length / resultsPerPage) - 1;
+            const highestPage = Math.ceil(length / resultsPerPage) - 1;
             page > highestPage && (page = highestPage);
 
             let end = page * resultsPerPage + resultsPerPage;
-            if (end > subscription.queue.length)
-                end = subscription.queue.length;
+            if (end > length)
+                end = length;
 
-            const release = subscription.queueAccessMutex.acquire();
             const tracks = subscription.queue.slice(page * resultsPerPage, end);
-            release();
 
             let currIndex = page * resultsPerPage;
 
@@ -305,7 +321,7 @@ const commands = {
                 string += '\n' + "`" + currIndex++ + "` " + "`" + (track.youtube_title || track.spotify_title) + "`"
             }
 
-            interaction.reply({ content: string, ephemeral: true })
+            interaction.unlockQueueReply({ content: string, ephemeral: true })
         }
 
     },
@@ -332,40 +348,44 @@ const commands = {
 
             subscription.lastTextChannel = interaction.channel;
 
-            if (subscription.queue.length < 2) {
-                return interaction.reply("If you swap a melon with a melon what do you get? A melon");
-            }
+            // Wait for the mutex lock for our queue so we don't modify it concurrently. Also adds 'unlockQueueReply' to the interaction
+            await subscription.queue.acquireLock(interaction);
+
+            const length = subscription.queue.length();
+
+            if (length < 2)
+                return interaction.unlockQueueReply("If you swap a melon with a melon what do you get? A melon");
 
             if (!interaction.options.getString('index1'))
-                return interaction.reply("At least 1 index must be supplied. If only one is supplied, it will swap with index `0`");
+                return interaction.unlockQueueReply("At least 1 index must be supplied. If only one is supplied, it will swap with index `0`");
 
             // If the command has an argument, they are not using /play in order to unpause, but rather to queue up a new track
             const index1 = overrideIndex1 ?? Number(interaction.options.getString('index1').trim());
             if (Number.isNaN(index1))
-                return interaction.reply("`index1` must be a number! To see indices, type /queue")
+                return interaction.unlockQueueReply("`index1` must be a number! To see indices, type /queue")
 
             const index2 = overrideIndex2 ?? Number(interaction.options.getString('index2')?.trim() ?? 0);
             if (Number.isNaN(index2))
-                return interaction.reply("`index2` must be a number! To see indices, type /queue")
+                return interaction.unlockQueueReply("`index2` must be a number! To see indices, type /queue")
 
-            if (index1 >= subscription.queue.length)
-                return interaction.reply("`index1` is too high (the highest index in the queue is `" + (subscription.queue.length - 1) + "`)")
+            if (index1 >= length)
+                return interaction.unlockQueueReply("`index1` is too high (the highest index in the queue is `" + (length - 1) + "`)")
 
-            if (index2 >= subscription.queue.length)
-                return interaction.reply("`index2` is too high (the highest index in the queue is `" + (subscription.queue.length - 1) + "`)")
+            if (index2 >= length)
+                return interaction.unlockQueueReply("`index2` is too high (the highest index in the queue is `" + (length - 1) + "`)")
 
             if (index1 < 0)
-                return interaction.reply("`index1` is too low (cannot be below `0`)")
+                return interaction.unlockQueueReply("`index1` is too low (cannot be below `0`)")
 
             if (index2 < 0)
-                return interaction.reply("`index2` is too low (cannot be below `0`)")
+                return interaction.unlockQueueReply("`index2` is too low (cannot be below `0`)")
 
             if (index1 === index2)
-                return interaction.reply("If you swap a melon with a melon what do you get? A melon");
+                return interaction.unlockQueueReply("If you swap a melon with a melon what do you get? A melon");
 
-            subscription.swap(index1, index2)
+            subscription.queue.swap(index1, index2)
 
-            return interaction.reply("Swapped positions `" + index1 + "` and `" + index2 + "` in the queue")
+            return interaction.unlockQueueReply("Swapped positions `" + index1 + "` and `" + index2 + "` in the queue")
         }
     },
 
@@ -411,14 +431,11 @@ const commands = {
 
             subscription.lastTextChannel = interaction.channel;
 
-            // If it is currently loading a track.. 
-            const { status } = subscription.audioPlayer.state;
-            if (status === AudioPlayerStatus.Idle || status === AudioPlayerStatus.Buffering)
-                return interaction.reply("Cannot skip since a track is not playing yet")
+            subscription.stop();
 
-            const skipping = subscription.nowPlaying();
-            subscription.skip();
-            return interaction.reply("Skipped `" + skipping.youtube_title + "`")
+            return interaction.reply("Stopped playing on this server")
+
+
         }
     },
 
@@ -441,20 +458,27 @@ const commands = {
 
             subscription.lastTextChannel = interaction.channel;
 
+            // Wait for the mutex lock for our queue so we don't modify it concurrently. Also adds 'unlockQueueReply' to the interaction
+            const unlockQueue = await subscription.queue.acquireLock(interaction);
+
             if (!interaction.options.getString('index'))
-                return interaction.reply("A queue index must be specified for this command`");
+                return interaction.unlockQueueReply("A queue index must be specified for this command`");
 
             const index = Number(interaction.options.getString('index').trim())
             if (Number.isNaN(index))
-                return interaction.reply("Index must be a number! To see indices, type /queue")
+                return interaction.unlockQueueReply("`index` must be a number! To see indices, type /queue")
 
             if (index <= 0) {
-                return interaction.reply("Replacing with index 0 is the same as /skip. Just use /skip")
+                return interaction.unlockQueueReply("Replacing with index 0 is the same as /skip. Just use /skip")
             }
 
-            if (index >= subscription.queue.length) {
-                return interaction.reply("Index too high (the highest index in the queue is `" + (subscription.queue.length - 1) + "`)")
+            const length = subscription.queue.length();
+
+            if (index >= length) {
+                return interaction.unlockQueueReply("`index` too high (the highest index in the queue is `" + (length - 1) + "`)")
             }
+
+            unlockQueue();
 
             await commands.swap.execute(interaction, 0, index);
             subscription.skip();
@@ -481,22 +505,29 @@ const commands = {
 
             subscription.lastTextChannel = interaction.channel;
 
+            // Wait for the mutex lock for our queue so we don't modify it concurrently. Also adds 'unlockQueueReply' to the interaction
+            const unlockQueue = await subscription.queue.acquireLock(interaction);
+
             if (!interaction.options.getString('index'))
-                return interaction.reply("A queue index must be specified for this command`");
+                return interaction.unlockQueueReply("A queue index must be specified for this command`");
+
+            const length = await subscription.queue.length();
 
             const index = Number(interaction.options.getString('index').trim())
             if (Number.isNaN(index))
-                return interaction.reply("Index must be a number! To see indices, type /queue")
+                return interaction.unlockQueueReply("`index` must be a number! To see indices, use /queue")
 
             if (index <= 0) {
-                return interaction.reply("Jumping to index 0 is the same as /skip. Just use /skip")
+                return interaction.unlockQueueReply("Jumping to index 0 is the same as /skip. Just use /skip")
             }
 
-            if (index >= subscription.queue.length) {
-                return interaction.reply("Index too high (the highest index in the queue is `" + (subscription.queue.length - 1) + "`)")
+            if (index >= length) {
+                return interaction.unlockQueueReply("`index` too high (the highest index in the queue is `" + (length - 1) + "`)")
             }
 
-            subscription.jump(index);
+            interaction.reply('Skipping the current song and jumping to position `' + index + '`')
+            subscription.queue.jump(index);
+            unlockQueue();
         }
 
     },
@@ -520,22 +551,33 @@ const commands = {
 
             subscription.lastTextChannel = interaction.channel;
 
+            // Wait for the mutex lock for our queue so we don't modify it concurrently. Also adds 'unlockQueueReply' to the interaction
+            const unlockQueue = await subscription.queue.acquireLock(interaction);
+
             if (!interaction.options.getString('index'))
-                return interaction.reply("A queue index must be specified for this command`");
+                return interaction.unlockQueueReply("A queue index must be specified for this command`");
+
+
+            const length = subscription.queue.length();
 
             const index = Number(interaction.options.getString('index').trim())
             if (Number.isNaN(index))
-                return interaction.reply("Index must be a number! To see indices, type /queue")
+                return interaction.unlockQueueReply("`index` must be a number! To see indices, use /queue")
 
             if (index < 0) {
-                return interaction.reply("Index too low")
+                return interaction.unlockQueueReply("`index` too low. To see indices, use /queue")
             }
 
-            if (index >= subscription.queue.length) {
-                return interaction.reply("Index too high (the highest index in the queue is `" + (subscription.queue.length - 1) + "`)")
+            if (index >= length) {
+                return interaction.unlockQueueReply("`index` too high (the highest index in the queue is `" + (length - 1) + "`)")
             }
 
-            subscription.remove(index);
+            const trackAtIndex = subscription.queue.get(index);
+
+            interaction.reply('Removing the song at position`' + index + '` (`' + (trackAtIndex.youtube_title ?? trackAtIndex.spotify_title) + '`) from the queue')
+
+            subscription.queue.remove(index);
+            unlockQueue();
         }
 
     },
@@ -582,15 +624,21 @@ async function enqueueYoutubeTrack(track, subscription, deferred_interaction, be
 
     now && (beginningOfQueue = true);
 
+    // Wait for mutex lock for queue to be sure that we are not modifying it concurrently
+    const unlockQueue = await subscription.queue.acquireLock();
     if (beginningOfQueue) {
-        subscription.enqueueNext(track);
+        subscription.queue.enqueueFirst(track);
+        unlockQueue();
         if (now)
-            subscription.skip(); 
+            subscription.skip();
+        void subscription.processQueue();
         deferred_interaction.followUp(`Enqueued ${"`" + track.youtube_title + "`"} at position ${"`0`"}`);
     }
     else {
-        deferred_interaction.followUp(`Enqueued ${"`" + track.youtube_title + "`"} at position ${"`" + (subscription.queue.length) + "`"}`);
-        subscription.enqueue(track);
+        deferred_interaction.followUp(`Enqueued ${"`" + track.youtube_title + "`"} at position ${"`" + (subscription.queue.length()) + "`"}`);
+        subscription.queue.enqueue(track);
+        unlockQueue();
+        void subscription.processQueue();
     }
 
 }
