@@ -225,6 +225,7 @@ export class MusicSubscription {
 		// Take the first item from the queue. This is guaranteed to exist due to the non-empty check above.
 		const unlockQueue = await this.queue.acquireLock();
 		const nextTrack = this.queue.dequeue();
+		console.log("Next fuck", nextTrack)
 		unlockQueue();
 
 		try {
@@ -233,6 +234,7 @@ export class MusicSubscription {
 			this.audioPlayer.play(resource);
 			this.queueProcessLock = false;
 		} catch (error) {
+			console.log(error)
 			// If an error occurred, try the next item of the queue instead
 			// 99% of the time, we are able to recover from the error (see spawnErrorHandler inside track.js) by downloading a different youtube URL, but in
 			// the rare cases where a track is completely unable to play, we need this code block to try the next one and kickstart the natural queue flow

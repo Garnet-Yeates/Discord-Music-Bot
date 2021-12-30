@@ -71,8 +71,12 @@ export default class Queue {
 		return this.internal.slice(start, end);
 	}
 
+    splice(start, deleteCount, ...items) {
+		return this.internal.splice(start, deleteCount, ...items);
+	}
+
     jump(index) {
-        this.internal = this.slice(0, index)
+        this.internal = this.slice(index)
     }
 
 	dequeue() {

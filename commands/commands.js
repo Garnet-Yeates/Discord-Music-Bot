@@ -462,14 +462,14 @@ const commands = {
             const unlockQueue = await subscription.queue.acquireLock(interaction);
 
             if (!interaction.options.getString('index'))
-                return interaction.unlockQueueReply("A queue index must be specified for this command`");
+                return interaction.unlockQueueReply("A queue `index` must be specified for this command`");
 
             const index = Number(interaction.options.getString('index').trim())
             if (Number.isNaN(index))
                 return interaction.unlockQueueReply("`index` must be a number! To see indices, type /queue")
 
             if (index <= 0) {
-                return interaction.unlockQueueReply("Replacing with index 0 is the same as /skip. Just use /skip")
+                return interaction.unlockQueueReply("Replacing with index `0` is the same as /skip. Just use /skip")
             }
 
             const length = subscription.queue.length();
@@ -478,13 +478,20 @@ const commands = {
                 return interaction.unlockQueueReply("`index` too high (the highest index in the queue is `" + (length - 1) + "`)")
             }
 
+            const trackAtIndex = subscription.queue.get(index);
+
+            // Take the song out of its position and put it at index 0, pushing everything else up by 1 index
+            const [removed] = subscription.queue.splice(index, 1);
+            subscription.queue.splice(0, 0, removed);
+            console.log(subscription.queue.internal[0])
             unlockQueue();
 
-            await commands.swap.execute(interaction, 0, index);
+            interaction.reply('Replacing the currently playing song with the one at index `' + index + '` (`' + (trackAtIndex.youtube_title ?? trackAtIndex.spotify_title) + '`)')
+
             subscription.skip();
         }
 
-    },
+    }, 
 
     jump: {
 
@@ -528,6 +535,8 @@ const commands = {
             interaction.reply('Skipping the current song and jumping to position `' + index + '`')
             subscription.queue.jump(index);
             unlockQueue();
+
+            subscription.skip();
         }
 
     },
