@@ -1,6 +1,6 @@
-import { SlashCommandBuilder } from '@discordjs/builders';
+import { SlashCommandBuilder } from '@discordjs/builders'
 
-import { GuildMember, MessageEmbed, MessageAttachment } from 'discord.js';
+import { GuildMember, MessageEmbed, MessageAttachment } from 'discord.js'
 import {
     AudioPlayerStatus,
     entersState,
@@ -9,8 +9,10 @@ import {
 } from '@discordjs/voice';
 
 import { Track } from '../music/track.js';
-import { subscriptions, getOrCreateSubscription } from '../music/subscription.js';
-import { getSpotifySongsFromPlaylist } from '../api-functions/spotify-functions.js';
+import { subscriptions, getOrCreateSubscription } from '../music/subscription.js'
+import { getSpotifySongsFromPlaylist } from '../api-functions/spotify-functions.js'
+
+import client from '../client.js';
 
 // In order for an interaction to be valid for music playing, it must be made by a guild member who is inside of a voice channel
 const isInteractionValidForMusic = (interaction) => (interaction && interaction.member instanceof GuildMember && interaction?.member?.voice?.channel?.id && interaction.channel)
@@ -62,7 +64,6 @@ const commands = {
             const requestedBy = interaction.member.nickname || interaction.member.user.username;
 
             // If they typed something after /play then we will create a subscription no matter what. If they didn't they are using it to unpause so we don't necessarily want to create a subscriptoon
-            let subscription = userInput ? getOrCreateSubscription(voiceChannel, textChannel) : subscriptions.get(interaction.guildId)
 
             // For the lifeCycleFunctions, even though they are wrapped, I bound 'this' to be the current track that is playing
             const lifeCycleFunctions = {
@@ -72,8 +73,6 @@ const commands = {
 
                     const youtubeIcon = new MessageAttachment('./assets/youtube_icon.png');
 
-                    console.log('raw timestamp', this.durationTimestamp);
-
                     const embed = new MessageEmbed()
                         .setColor('#0099ff')
                         .setTitle(this.youtube_title)
@@ -81,25 +80,35 @@ const commands = {
                         .setAuthor('Now Playing:')
                         .setDescription(`Requested by: ${"`" + this.requestedBy + "`"} \n Duration: ${"`" + this.durationTimestamp + "`"}`)
                         .setThumbnail('attachment://youtube_icon.png')
-                        .setTimestamp()                                                      
+                        .setTimestamp()
                         .setFooter(`Filler text but still has less filler than Naruto Shippuden` + "\u3000".repeat(2) + "|", 'https://i.imgur.com/AfFp7pu.png');
 
                     messageData.files = [youtubeIcon]
                     messageData.embeds = [embed]
 
+                    this.subscription.lastTextChannel.guild.members.cache.get(client.user.id).setNickname('garnbot')
+
                     if (this.spotify_title) {
+
+                        if (this.spotify_authors) {
+                            this.subscription.lastTextChannel.guild.members.cache.get(client.user.id).setNickname(`garnbot [${this.getSpotifyAuthorString(1)}]`)
+                        }
+
                         if (this.spotify_image_url) {
                             embed.setThumbnail(this.spotify_image_url)
                             delete messageData.files;
                         }
-                        embed.setTitle(`${this.spotify_author} - ${this.spotify_title} `)
+                        embed.setTitle(`${this.getSpotifyAuthorString(1)} - ${this.spotify_title} `)
                         embed.setDescription(`Youtube Song Name: ${"`" + this.youtube_title + "`"} \n ${embed.description}`)
                     }
                     this.subscription.lastTextChannel.send(messageData);
                 },
+
                 onFinish() {
+                    this.subscription.lastTextChannel.guild.members.cache.get(client.user.id).setNickname('garnbot')
                     this.subscription.lastTextChannel.send(`Finished playing ${"`" + this.youtube_title + "`"}. There are currently ${"`" + this.subscription.queue.length + "`"} songs left in the queue`)
                 },
+
                 onError(error) {
                     console.warn(error);
                     interaction.followUp({ content: `Error: ${error}` }).catch(console.warn);
@@ -117,13 +126,15 @@ const commands = {
 
                         const youtube_url = userInput;
 
-                        if (!await ensureConnectionIsReady(subscription))
-                            return interaction.followUp('Could not establish a voice connection within 15 seconds, please try again later');
-
                         // Attempt to create a Track from the user's supplied URL. 
-                        const track = await Track.fromURL({ youtube_url, lifeCycleFunctions, requestedBy, subscription });
+                        const track = await Track.fromURL({ youtube_url, lifeCycleFunctions, requestedBy });
                         if (!track)
                             return interaction.followUp(`Error queuing up track. Make sure the URL is valid, or try again later`);
+
+                        const subscription = getOrCreateSubscription(voiceChannel, textChannel)
+
+                        if (!await ensureConnectionIsReady(subscription))
+                            return interaction.followUp('Could not establish a voice connection within 15 seconds, please try again later');
 
                         enqueueYoutubeTrack(track, subscription, interaction, beginningOfQueue, now);
                     }
@@ -137,11 +148,6 @@ const commands = {
 
                         const spotify_url = userInput;
 
-                        // When subscriptions are instantialized, a VoiceConnection is automatically created via the call to 'joinVoiceChannel'. So there *should* be a 'ready' connection
-                        // So here we are ensuring that the VoiceConnection is in the 'ready' state before queuing up new music
-                        if (!ensureConnectionIsReady(subscription))
-                            return interaction.followUp('Could not establish a voice connection within 15 seconds, please try again later');
-
                         const spotifySongs = await getSpotifySongsFromPlaylist(spotify_url);
 
                         if (!spotifySongs)
@@ -149,29 +155,40 @@ const commands = {
 
                         // Map all of our spotify songs to spotify tracks. These spotify tracks differ from youtube tracks in the sense that their youtube_title and youtube_url (and alternates)
                         // are not calculated until the moment that the track is about to be played
-                        const spotifyTracks = await Promise.all(spotifySongs.map(async spotifyTrack => {
+                        const spotifyTracks = spotifySongs.map(spotifySong =>
+                            Track.fromSpotifyInfo({
+                                spotify_image_url: spotifySong.image_url,
+                                spotify_title: spotifySong.title,
+                                spotify_authors: spotifySong.authors.map(author => author.name),
+                                lifeCycleFunctions,
+                                requestedBy
+                            }));
 
-                            const { duration, image_url: spotify_image_url, title: spotify_title, author: spotify_author } = spotifyTrack;
+                        const subscription = getOrCreateSubscription(voiceChannel, textChannel)
 
-                            return await Track.fromSpotifyInfo({ spotify_image_url, spotify_title, spotify_author, lifeCycleFunctions, requestedBy, subscription });
-                        }));
+                        if (!await ensureConnectionIsReady(subscription))
+                            return interaction.followUp('Could not establish a voice connection within 15 seconds, please try again later');
 
                         subscription.bulkEnqueue(spotifyTracks);
 
-                        return interaction.followUp(`Enqueued **${spotifySongs.length}** tracks from the spotify playlist`)
+                        return interaction.followUp(`Enqueued **${spotifyTracks.length}** tracks from the spotify playlist`)
                     }
 
                     // When they type /play <YOUTUBE_TITLE> (aka song name)
                     else {
                         const youtube_title = userInput;
 
+                        // Attempt to create a Track from the user's video URL
+                        const track = await Track.fromSearch({ searchString: youtube_title, requestedBy, lifeCycleFunctions });
+                        if (!track)
+                            return interaction.followUp(`Could not find any tracks based on that search. Try using a less specific search`);
+
+                        const subscription = getOrCreateSubscription(voiceChannel, textChannel)
+
                         if (!await ensureConnectionIsReady(subscription))
                             return interaction.followUp('Could not establish a voice connection within 15 seconds, please try again later');
 
-                        // Attempt to create a Track from the user's video URL
-                        const track = await Track.fromSearch({ search: youtube_title, requestedBy, subscription, lifeCycleFunctions });
-                        if (!track)
-                            return interaction.followUp(`Could not find any tracks based on that search. Try using a less specific search`);
+                        track.subscription = subscription;
 
                         enqueueYoutubeTrack(track, subscription, interaction, beginningOfQueue, now);
                     }
@@ -183,7 +200,7 @@ const commands = {
             }
             else {
 
-                const subscription = subscriptions.get(interaction.guildId);
+                const subscription = subscriptions.get(interaction.guildId)
 
                 if (!subscription)
                     return interaction.followUp("Not currently playing on this server");
@@ -359,6 +376,9 @@ const commands = {
 
             const subscription = subscriptions.get(interaction.guildId);
 
+            if (!interaction.options.getString('index1'))
+                return interaction.reply("At least 1 index must be supplied. If only one is supplied, it will swap with position `0`");
+
             if (!subscription)
                 return interaction.reply("Not currently playing on this server");
 
@@ -366,15 +386,12 @@ const commands = {
                 return interaction.reply("If you swap a melon with a melon what do you get? A melon");
             }
 
-            console.log("index 1: " + interaction.options.getString('index1').trim());
-            console.log("index 2: " + interaction.options.getString('index2').trim());
-
             // If the command has an argument, they are not using /play in order to unpause, but rather to queue up a new track
             const index1 = Number(interaction.options.getString('index1').trim());
             if (Number.isNaN(index1))
                 return interaction.reply("Index must be a number! To see indices, type /queue")
 
-            const index2 = Number(interaction.options.getString('index2').trim());
+            const index2 = Number(interaction.options.getString('index2')?.trim() ?? 0);
             if (Number.isNaN(index2))
                 return interaction.reply("Index must be a number! To see indices, type /queue")
 
@@ -424,7 +441,7 @@ const commands = {
         }
     },
 
-    skip: {
+    stop: {
 
         commandBuilder: new SlashCommandBuilder()
             .setName('stop')
@@ -450,6 +467,18 @@ const commands = {
             subscription.audioPlayer.stop();
             return interaction.reply("Skipped `" + skipping.youtube_title + "`")
         }
+    },
+
+    jump: {
+
+        commandBuilder: new SlashCommandBuilder()
+            .setName('move')
+            .setDescription('Moves the bot to the channel you are currently in'),
+
+    },
+
+    remove: {
+
     },
 
     move: {
@@ -495,7 +524,7 @@ async function enqueueYoutubeTrack(track, subscription, deferred_interaction, be
     now && (beginningOfQueue = true);
 
     if (beginningOfQueue) {
-        subscription.enqueueNext(track); 
+        subscription.enqueueNext(track);
         if (now)
             subscription.audioPlayer.stop(true); // stop switches audioplayer to idle state which processess queue
         deferred_interaction.followUp(`Enqueued ${"`" + track.youtube_title + "`"} at position ${"`0`"}`);

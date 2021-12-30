@@ -65,7 +65,7 @@ export function getOrCreateSubscription(voiceChannel, textChannel) {
  * 
  * A music subscription ties together a Guild with a Queue, a VoiceConnection, and an AudioPlayer (which the voice connection is subscribed to). Because
  * of the way discordjs/voice works, the VoiceConnection can be moved from channel to channel (on the same server) without having to make
- * a new subscription. 
+ * a new subscription or even update the reference. 
  * 
  * The MusicSubscription class attaches logic to both the AudioPlayer and the VoiceConnection in order to implement error recovery and reconnection logic.
  * As a result of this we get a robust music player with a queue that doesn't lock/freeze up.
@@ -137,7 +137,6 @@ export class MusicSubscription {
 		// Attach logic to the AudioPlayer to implement an event driven queue that doesn't lock/freeze up (unless we want it to)
 		this.audioPlayer.on('stateChange', async (oldState, newState) => {
 			console.log(`AudioPlayer state changed from ${oldState.status} to ${newState.status}`)
-
 
 			// If the Idle state is entered from a non-Idle state, it means that an audio resource has finished playing. It could also mean that it went from the Buffering state to
 			// the Idle state (which means youtube-dl-exec ran into exit code 1). Based on which situation it is, this block will either automatically process the queue or wait for
@@ -229,6 +228,10 @@ export class MusicSubscription {
 		let temporaryValue = this.queue[index1];
 		this.queue[index1] = this.queue[index2];
 		this.queue[index2] = temporaryValue;
+	}
+
+	remove(index) {
+		this.queue.splice(index, 1);
 	}
 
 	shuffle() {

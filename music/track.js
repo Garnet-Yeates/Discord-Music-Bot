@@ -24,28 +24,35 @@ const noop = () => { };
  */
 export class Track {
 
-	constructor({ youtube_url, youtube_title, spotify_title, spotify_author, spotify_image_url, requestedBy, durationTimestamp, subscription, onStart, onFinish, onError }) {
+	constructor({ youtube_url, youtube_title, spotify_title, spotify_main_author, spotify_authors, spotify_image_url, requestedBy, durationTimestamp, onStart, onFinish, onError }) {
 
 		this.youtube_url = youtube_url;        // All tracks are guaranteed to have a youtube_url and youtube_title at the time onStart() is called
 		this.youtube_title = youtube_title;    // (spotify tracks don't get theirs until the moment they are taken from the queue. Why? see Track.fromSpotifyInfo for an explanation)
 
-		this.spotify_title = spotify_title;    // only tracks that are queued up from spotify will have these properties filled out. When a spotify track plays, it
-		this.spotify_author = spotify_author;  // shows both spotify title and the calculated youtube title, so users can see if there is a disparity
+		this.spotify_title = spotify_title;      // only tracks that are queued up from spotify will have these properties filled out. When a spotify track plays, it
+		this.spotify_authors = spotify_authors;  // shows both spotify title and the calculated youtube title, so users can see if there is a disparity
 		this.spotify_image_url = spotify_image_url;
+		this.spotify_main_author = spotify_main_author;
 
 		this.requestedBy = requestedBy;
 		this.durationTimestamp = durationTimestamp;
-
-		this.subscription = subscription;      // We give the track a reference to its subscription so it can access subscription.lastTextChannel and send
-		// messages within the lifecyle functions (e.g onStart = () => this.subscription.lastTextChannel.send('started!'))
 
 		this.currentReplayAttempt = 0;
 
 		this.alternate_youtube_videos = [];
 
-
 		this.setLifecycleFunctions({ onStart, onFinish, onError });
 
+	}
+
+	getSpotifyAuthorString(maxAuthorCount = 0) {
+		maxAuthorCount === 0 && (maxAuthorCount = this.spotify_authors.length)
+		if (!this.spotify_authors)
+			return null;
+		let str = this.spotify_authors[0];
+		for (let i = 1; i < maxAuthorCount; i++)
+			str += ` ${this.spotify_authors[i]}`
+		return str;
 	}
 
 	// Lifecycle functions onStart, onFinish, and onError are guaranteed to only be called once. Why must we guarantee this? e.g: any time the audioPlayer transitions
@@ -90,10 +97,10 @@ export class Track {
 				if (!this.spotify_title)
 					return reject('I am a bad coder')
 
-				searchYoutube({ songName: this.spotify_title, author: this.spotify_author, uncensoredLyrics: true }).then((searchResults) => {
+				searchYoutube({ songName: this.spotify_title, author: this.getSpotifyAuthorString(2), uncensoredLyrics: true }).then((searchResults) => {
 
 					if (!searchResults) {
-						this.subscription.lastTextChannel.send('Could not find a Youtube URL relevant to the Spotify song `' + this.spotify_author + " - " + this.spotify_title + "`. This track will be skipped.")
+						this.subscription.lastTextChannel.send('Could not find a Youtube URL relevant to the Spotify song `' + this.getSpotifyAuthorString() + " - " + this.spotify_title + "`. This track will be skipped.")
 						return reject('Could not find youtube URL for this spotify track');
 					}
 
@@ -211,9 +218,9 @@ export class Track {
 	 * @param {*} lifeCycleFunctions 
 	 * @returns 
 	 */
-	static async fromSpotifyInfo({ spotify_image_url, spotify_title, spotify_author, lifeCycleFunctions, requestedBy, durationTimestamp, subscription }) {
+	static fromSpotifyInfo({ spotify_image_url, spotify_title, spotify_main_author, spotify_authors, lifeCycleFunctions, requestedBy, durationTimestamp, subscription }) {
 
-		return new Track({ spotify_image_url, spotify_title, spotify_author, requestedBy, durationTimestamp, subscription, ...lifeCycleFunctions });
+		return new Track({ spotify_image_url, spotify_title, spotify_main_author, spotify_authors, requestedBy, durationTimestamp, ...lifeCycleFunctions });
 	}
 
 
@@ -225,9 +232,9 @@ export class Track {
 	 * @param {} param0 
 	 * @returns a track if it was able to find any search results, or null if it could not find any search results
 	 */
-	static async fromSearch({ search, requestedBy, subscription, lifeCycleFunctions }) {
+	static async fromSearch({ searchString, requestedBy, lifeCycleFunctions }) {
 
-		const searchResults = await searchYoutube({ songName: search });
+		const searchResults = await searchYoutube({ songName: searchString });
 
 		if (!searchResults) {
 			console.log('Track.fromSearch will return null because no search results were found');
@@ -238,7 +245,7 @@ export class Track {
 		const youtube_title = searchResults[0].youtube_title;
 		const durationTimestamp = searchResults[0].durationTimestamp;
 
-		const track = new Track({ youtube_title, youtube_url, requestedBy, durationTimestamp, subscription, ...lifeCycleFunctions });
+		const track = new Track({ youtube_title, youtube_url, requestedBy, durationTimestamp, ...lifeCycleFunctions });
 
 		for (let i = 1; i < searchResults.length; i++) {
 			track.alternate_youtube_videos[i - 1] = searchResults[i];
@@ -255,14 +262,14 @@ export class Track {
 	 *t
 	 * @returns The created Track
 	 */
-	static async fromURL({ youtube_url, lifeCycleFunctions, requestedBy, subscription }) {
+	static async fromURL({ youtube_url, lifeCycleFunctions, requestedBy }) {
 		try {
 			const info = await ytdl.getInfo(youtube_url);
 
 			const { title: youtube_title, lengthSeconds } = info.videoDetails;
 			const durationTimestamp = TimeFormat.fromS(Number(lengthSeconds));
 
-			const track = new Track({ youtube_title, youtube_url, requestedBy, durationTimestamp, subscription, ...lifeCycleFunctions });
+			const track = new Track({ youtube_title, youtube_url, requestedBy, durationTimestamp, ...lifeCycleFunctions });
 
 			return track;
 		}

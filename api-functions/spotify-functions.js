@@ -44,11 +44,10 @@ export async function getSpotifySongsFromPlaylist(playlist_url) {
                 fields: 'items.track'
             });
 
-            items.push(...response.body.items.map(item => ({ 
-                title: item.track.name, 
-                author: (item.track.artists[0].name + (" " + (item.track.artists[1]?.name ?? ""))).trim(),
-                duration: item.track.duration_ms / 1000,
-                image_url: item.track.album.images[2]?.url
+            items.push(...response.body.items.map(item => ({
+                title: item.track.name,
+                authors: item.track.artists.length > 0 ? item.track.artists : undefined,
+                image_url: item.track.album.images[2]?.url,
             })));
 
             offset += 100;
