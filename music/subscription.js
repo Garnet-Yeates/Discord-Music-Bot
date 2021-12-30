@@ -86,7 +86,6 @@ export class MusicSubscription {
 
 			if (newState.status === VoiceConnectionStatus.Disconnected) {
 
-
 				// WebSocket 4014 means we should not manually try to reconnect. There is a chance the connection can recover if the disconnect was a result of moving
 				// voice channels. There is also the possibility it was manually disconnected. Either way, we will give it 5 seconds to reconnect, else we destroy the connection
 				if (newState.reason === VoiceConnectionDisconnectReason.WebSocketClose && newState.closeCode === 4014) {

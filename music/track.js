@@ -40,9 +40,6 @@ export class Track {
 		this.currentReplayAttempt = 0;
 
 		this.alternate_youtube_videos = [];
-
-		this.setLifecycleFunctions({ onStart, onFinish, onError });
-
 	}
 
 	getSpotifyAuthorString(maxAuthorCount = 0) {
@@ -58,26 +55,64 @@ export class Track {
 	// Lifecycle functions onStart, onFinish, and onError are guaranteed to only be called once. Why must we guarantee this? e.g: any time the audioPlayer transitions
 	// to the playing state, onStart is called so if we don't wrap it, then making the bot move voice channels will cause AudioPlayer state change
 	// (as a result of going from AutoPaused to Playing during the interruption of the VoiceConnection), meaning onStart() will get called again.
-	setLifecycleFunctions(lifeCycleFunctions) {
+	onStart() {
 
-		const wrappedFunctions = {
-			onStart() {
-				this.onStart = noop;
-				lifeCycleFunctions.onStart.bind(this)();
-			},
-			onFinish() {
-				this.onFinish = noop;
-				lifeCycleFunctions.onFinish.bind(this)();
-			},
-			onError(error) {
-				this.onError = noop;
-				lifeCycleFunctions.onError.bind(this)(error);
-			},
-		};
+		if (this.started)
+			return;
+		this.started = true;
 
-		this.onStart = wrappedFunctions.onStart;
-		this.onFinish = wrappedFunctions.onFinish;
-		this.onError = wrappedFunctions.onError;
+		const messageData = {};
+
+		const youtubeIcon = new MessageAttachment('./assets/youtube_icon.png');
+
+		const embed = new MessageEmbed()
+			.setColor('#0099ff')
+			.setTitle(this.youtube_title)
+			.setURL(this.youtube_url)
+			.setAuthor('Now Playing:')
+			.setDescription(`Requested by: ${"`" + this.requestedBy + "`"} \n Duration: ${"`" + this.durationTimestamp + "`"}`)
+			.setThumbnail('attachment://youtube_icon.png')
+			.setTimestamp()
+			.setFooter(`Filler text but still has less filler than Naruto Shippuden` + "\u3000".repeat(2) + "|", 'https://i.imgur.com/AfFp7pu.png');
+
+		messageData.files = [youtubeIcon]
+		messageData.embeds = [embed]
+
+		this.subscription.lastTextChannel.guild.members.cache.get(client.user.id).setNickname('garnbot')
+
+		if (this.spotify_title) {
+
+			if (this.spotify_authors) {
+				this.subscription.lastTextChannel.guild.members.cache.get(client.user.id).setNickname(`garnbot [${this.getSpotifyAuthorString(1)}]`)
+			}
+
+			if (this.spotify_image_url) {
+				embed.setThumbnail(this.spotify_image_url)
+				delete messageData.files;
+			}
+			embed.setTitle(`${this.getSpotifyAuthorString(1)} - ${this.spotify_title} `)
+			embed.setDescription(`Youtube Song Name: ${"`" + this.youtube_title + "`"} \n ${embed.description}`)
+		}
+		this.subscription.lastTextChannel.send(messageData);
+	}
+
+	onFinish() {
+		if (this.finished)
+			return;
+		this.finished = true;
+
+		this.subscription.lastTextChannel.guild.members.cache.get(client.user.id).setNickname('garnbot')
+                    this.subscription.lastTextChannel.send(`Finished playing ${"`" + this.youtube_title + "`"}. There are currently ${"`" + this.subscription.queue.length + "`"} songs left in the queue`)
+	}
+
+	onError() {
+		if (this.errored)
+			return;
+		this.errored = true;
+
+		interaction.followUp({ content: `Error: ${error}` });
+
+		interaction.followUp({ content: `Error.message: ${error.message}` });
 	}
 
 	/**
@@ -215,12 +250,11 @@ export class Track {
 	 * and we get the relevant URLs as the song is about to play, based on the spotify info such as title and author
 	 * @param {} songTitle 
 	 * @param {*} author 
-	 * @param {*} lifeCycleFunctions 
 	 * @returns 
 	 */
-	static fromSpotifyInfo({ spotify_image_url, spotify_title, spotify_main_author, spotify_authors, lifeCycleFunctions, requestedBy, durationTimestamp, subscription }) {
+	static fromSpotifyInfo({ spotify_image_url, spotify_title, spotify_main_author, spotify_authors, requestedBy, durationTimestamp, subscription }) {
 
-		return new Track({ spotify_image_url, spotify_title, spotify_main_author, spotify_authors, requestedBy, durationTimestamp, ...lifeCycleFunctions });
+		return new Track({ spotify_image_url, spotify_title, spotify_main_author, spotify_authors, requestedBy, durationTimestamp });
 	}
 
 
@@ -232,7 +266,7 @@ export class Track {
 	 * @param {} param0 
 	 * @returns a track if it was able to find any search results, or null if it could not find any search results
 	 */
-	static async fromSearch({ searchString, requestedBy, lifeCycleFunctions }) {
+	static async fromSearch({ searchString, requestedBy }) {
 
 		const searchResults = await searchYoutube({ songName: searchString });
 
@@ -245,7 +279,7 @@ export class Track {
 		const youtube_title = searchResults[0].youtube_title;
 		const durationTimestamp = searchResults[0].durationTimestamp;
 
-		const track = new Track({ youtube_title, youtube_url, requestedBy, durationTimestamp, ...lifeCycleFunctions });
+		const track = new Track({ youtube_title, youtube_url, requestedBy, durationTimestamp });
 
 		for (let i = 1; i < searchResults.length; i++) {
 			track.alternate_youtube_videos[i - 1] = searchResults[i];
@@ -255,21 +289,20 @@ export class Track {
 	}
 
 	/**
-	 * Creates a Track from a youtube video URL and lifecycle callback methods.
+	 * Creates a Track from a youtube video URL
 	 *
 	 * @param youtube_url The URL of the youtube video
-	 * @param lifeCycleFunctions Lifecycle callbacks
 	 *t
 	 * @returns The created Track
 	 */
-	static async fromURL({ youtube_url, lifeCycleFunctions, requestedBy }) {
+	static async fromURL({ youtube_url, requestedBy }) {
 		try {
 			const info = await ytdl.getInfo(youtube_url);
 
 			const { title: youtube_title, lengthSeconds } = info.videoDetails;
 			const durationTimestamp = TimeFormat.fromS(Number(lengthSeconds));
 
-			const track = new Track({ youtube_title, youtube_url, requestedBy, durationTimestamp, ...lifeCycleFunctions });
+			const track = new Track({ youtube_title, youtube_url, requestedBy, durationTimestamp });
 
 			return track;
 		}

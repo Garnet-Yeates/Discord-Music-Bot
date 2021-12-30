@@ -65,58 +65,6 @@ const commands = {
 
             // If they typed something after /play then we will create a subscription no matter what. If they didn't they are using it to unpause so we don't necessarily want to create a subscriptoon
 
-            // For the lifeCycleFunctions, even though they are wrapped, I bound 'this' to be the current track that is playing
-            const lifeCycleFunctions = {
-                onStart() {
-
-                    const messageData = {};
-
-                    const youtubeIcon = new MessageAttachment('./assets/youtube_icon.png');
-
-                    const embed = new MessageEmbed()
-                        .setColor('#0099ff')
-                        .setTitle(this.youtube_title)
-                        .setURL(this.youtube_url)
-                        .setAuthor('Now Playing:')
-                        .setDescription(`Requested by: ${"`" + this.requestedBy + "`"} \n Duration: ${"`" + this.durationTimestamp + "`"}`)
-                        .setThumbnail('attachment://youtube_icon.png')
-                        .setTimestamp()
-                        .setFooter(`Filler text but still has less filler than Naruto Shippuden` + "\u3000".repeat(2) + "|", 'https://i.imgur.com/AfFp7pu.png');
-
-                    messageData.files = [youtubeIcon]
-                    messageData.embeds = [embed]
-
-                    this.subscription.lastTextChannel.guild.members.cache.get(client.user.id).setNickname('garnbot')
-
-                    if (this.spotify_title) {
-
-                        if (this.spotify_authors) {
-                            this.subscription.lastTextChannel.guild.members.cache.get(client.user.id).setNickname(`garnbot [${this.getSpotifyAuthorString(1)}]`)
-                        }
-
-                        if (this.spotify_image_url) {
-                            embed.setThumbnail(this.spotify_image_url)
-                            delete messageData.files;
-                        }
-                        embed.setTitle(`${this.getSpotifyAuthorString(1)} - ${this.spotify_title} `)
-                        embed.setDescription(`Youtube Song Name: ${"`" + this.youtube_title + "`"} \n ${embed.description}`)
-                    }
-                    this.subscription.lastTextChannel.send(messageData);
-                },
-
-                onFinish() {
-                    this.subscription.lastTextChannel.guild.members.cache.get(client.user.id).setNickname('garnbot')
-                    this.subscription.lastTextChannel.send(`Finished playing ${"`" + this.youtube_title + "`"}. There are currently ${"`" + this.subscription.queue.length + "`"} songs left in the queue`)
-                },
-
-                onError(error) {
-                    console.warn(error);
-                    interaction.followUp({ content: `Error: ${error}` }).catch(console.warn);
-
-                    interaction.followUp({ content: `Error.message: ${error.message}` }).catch(console.warn);
-                },
-            }
-
             if (userInput) {
 
                 if (voiceChannel) {
@@ -127,7 +75,7 @@ const commands = {
                         const youtube_url = userInput;
 
                         // Attempt to create a Track from the user's supplied URL. 
-                        const track = await Track.fromURL({ youtube_url, lifeCycleFunctions, requestedBy });
+                        const track = await Track.fromURL({ youtube_url, requestedBy });
                         if (!track)
                             return interaction.followUp(`Error queuing up track. Make sure the URL is valid, or try again later`);
 
@@ -160,7 +108,6 @@ const commands = {
                                 spotify_image_url: spotifySong.image_url,
                                 spotify_title: spotifySong.title,
                                 spotify_authors: spotifySong.authors.map(author => author.name),
-                                lifeCycleFunctions,
                                 requestedBy
                             }));
 
@@ -179,7 +126,7 @@ const commands = {
                         const youtube_title = userInput;
 
                         // Attempt to create a Track from the user's video URL
-                        const track = await Track.fromSearch({ searchString: youtube_title, requestedBy, lifeCycleFunctions });
+                        const track = await Track.fromSearch({ searchString: youtube_title, requestedBy });
                         if (!track)
                             return interaction.followUp(`Could not find any tracks based on that search. Try using a less specific search`);
 
