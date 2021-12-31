@@ -160,12 +160,13 @@ export class Track {
 					{ stdio: ['ignore', 'pipe', 'ignore'] },
 				);
 
-				if (!process.stdout) {
+				const stream = process.stdout;
+
+				if (!stream) {
 					reject(new Error('No stdout'));
 					return;
 				}
-				const stream = process.stdout;
-
+				
 				// This is our errorHandler that is referenced below (process.once('spawn').catch(spawnErrorHandler))
 				// It handles errors that occur when the process that we get from youtubedl.exec spawns. What it does is
 				// it re-queues this track again at the beginning of the queue, and freezes the queue temporarily to allow
@@ -220,7 +221,7 @@ export class Track {
 
 							// Because of our calls to wait() and stop(), we can ensure that the track will be the one that plays next
 							const unlockQueue = await this.subscription.queue.acquireLock();
-							subscription.queue.enqueueFirst(this);
+							this.subscription.queue.enqueueFirst(this);
 							unlockQueue();
 
 							void this.subscription.processQueue();
