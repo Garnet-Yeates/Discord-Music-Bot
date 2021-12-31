@@ -41,6 +41,8 @@ const commands = {
 
         async execute(interaction, beginningOfQueue = false, now = false) {
 
+            const enqueueYoutubeTrack = commands.play.enqueueYoutubeTrack;
+
             // if now is set to true it means this execute function was called through the /now command, meaning the current song will get skipped and it will play the requested song immediately
             now && (beginningOfQueue = true)
 
@@ -168,7 +170,32 @@ const commands = {
                 subscription.audioPlayer.pause();
                 return interaction.followUp("Unpaused")
             }
+        },
+
+        // Cannot be used for spotify playlistt
+        async enqueueYoutubeTrack(track, subscription, deferred_interaction, beginningOfQueue, now) {
+
+            now && (beginningOfQueue = true);
+
+            // Wait for mutex lock for queue to be sure that we are not modifying it concurrently
+            const unlockQueue = await subscription.queue.acquireLock();
+            if (beginningOfQueue) {
+                subscription.queue.enqueueFirst(track);
+                unlockQueue();
+                if (now)
+                    subscription.skip();
+                void subscription.processQueue();
+                deferred_interaction.followUp(`Enqueued ${"`" + track.youtube_title + "`"} at position ${"`0`"}`);
+            }
+            else {
+                deferred_interaction.followUp(`Enqueued ${"`" + track.youtube_title + "`"} at position ${"`" + (subscription.queue.length()) + "`"}`);
+                subscription.queue.enqueue(track);
+                unlockQueue();
+                void subscription.processQueue();
+            }
+
         }
+
     },
 
     next: {
@@ -294,7 +321,7 @@ const commands = {
 
             const length = subscription.queue.length();
 
-            if (length == 0) 
+            if (length == 0)
                 return interaction.unlockQueueReply({ content: "The queue is currently empty", ephemeral: true })
 
             // If the command has an argument, they are not using /play in order to unpause, but rather to queue up a new track
@@ -434,8 +461,6 @@ const commands = {
             subscription.stop();
 
             return interaction.reply("Stopped playing on this server")
-
-
         }
     },
 
@@ -490,8 +515,7 @@ const commands = {
 
             subscription.skip();
         }
-
-    }, 
+    },
 
     jump: {
 
@@ -625,31 +649,6 @@ const commands = {
             return interaction.reply("Moved!")
         }
     },
-}
-
-
-// Cannot be used for spotify playlistt
-async function enqueueYoutubeTrack(track, subscription, deferred_interaction, beginningOfQueue, now) {
-
-    now && (beginningOfQueue = true);
-
-    // Wait for mutex lock for queue to be sure that we are not modifying it concurrently
-    const unlockQueue = await subscription.queue.acquireLock();
-    if (beginningOfQueue) {
-        subscription.queue.enqueueFirst(track);
-        unlockQueue();
-        if (now)
-            subscription.skip();
-        void subscription.processQueue();
-        deferred_interaction.followUp(`Enqueued ${"`" + track.youtube_title + "`"} at position ${"`0`"}`);
-    }
-    else {
-        deferred_interaction.followUp(`Enqueued ${"`" + track.youtube_title + "`"} at position ${"`" + (subscription.queue.length()) + "`"}`);
-        subscription.queue.enqueue(track);
-        unlockQueue();
-        void subscription.processQueue();
-    }
-
 }
 
 export default commands;
