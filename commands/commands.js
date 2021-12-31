@@ -590,7 +590,6 @@ const commands = {
             if (!interaction.options.getString('index'))
                 return interaction.unlockQueueReply("A queue index must be specified for this command`");
 
-
             const length = subscription.queue.length();
 
             const index = Number(interaction.options.getString('index').trim())
